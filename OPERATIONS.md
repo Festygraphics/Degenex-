@@ -15,3 +15,12 @@ If your branch reports merge conflicts, run:
 `npm run check:conflicts`
 
 This scans for unresolved merge markers (`<<<<<<<`, `=======`, `>>>>>>>`) across the repository.
+
+## Current conflict choice (for GitHub web resolver)
+
+If GitHub shows conflict markers in:
+
+- `README.md` around the operations link, keep:
+  - `For deployment and merge workflow notes, see [OPERATIONS.md](./OPERATIONS.md).`
+- `src/App.tsx` around API constants, keep:
+  - `const TELEGRAM_CHANNEL_URL = 'https://t.me/degenpapertrading';`
