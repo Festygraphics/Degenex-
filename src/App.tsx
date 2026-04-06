@@ -136,6 +136,113 @@ interface PortfolioData {
   }[];
 }
 
+const API_BASE_URL = (((import.meta as any).env?.VITE_API_BASE_URL as string) || '').replace(/\/$/, '');
+const DEXSCREENER_SEARCH_URL = 'https://api.dexscreener.com/latest/dex/search';
+const TELEGRAM_CHANNEL_URL = 'https://t.me/degenpapertrading';
+
+const apiUrl = (path: string) => {
+  if (path.startsWith('http')) return path;
+  return `${API_BASE_URL}${path}`;
+};
+
+const toNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const safeFetchJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
+  const fullUrl = apiUrl(path);
+  const res = await fetch(fullUrl, init);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status} on ${fullUrl}: ${text.slice(0, 300)}`);
+  }
+  return res.json();
+};
+
+const fallbackRewardsData: RewardsData = {
+  tasks: [],
+  missions: [],
+};
+
+const fallbackListingsData: ListingsData = {
+  new: [],
+  hot: [],
+  earlyGems: [],
+};
+
+const normalizeUser = (raw: Partial<User> & { id: number }): User => ({
+  id: raw.id,
+  username: raw.username,
+  photoUrl: raw.photoUrl,
+  balance: toNumber(raw.balance ?? 1000),
+  portfolio: raw.portfolio || {},
+  hasCompletedOnboarding: Boolean(raw.hasCompletedOnboarding),
+  isPro: Boolean(raw.isPro),
+  referralCode: raw.referralCode || `DGX-${raw.id}`,
+  referralsCount: toNumber(raw.referralsCount ?? 0),
+  completedTasks: raw.completedTasks || [],
+});
+
+const buildFallbackPortfolio = (user: User): PortfolioData => ({
+  balance: user.balance,
+  totalValue: user.balance,
+  tokens: [],
+  trades: [],
+});
+
+const colorFromSymbol = (symbol: string) => {
+  const palette = ['#7C3AED', '#22C55E', '#F97316', '#0EA5E9', '#EF4444', '#EAB308', '#8B5CF6'];
+  const hash = symbol.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  return palette[hash % palette.length];
+};
+
+const mapDexPairToToken = (pair: any): Token | null => {
+  const baseToken = pair?.baseToken;
+  if (!baseToken?.symbol || !baseToken?.name) return null;
+  const pairAddress = pair?.pairAddress || `${pair?.chainId || 'dex'}-${baseToken.symbol}`;
+
+  return {
+    id: String(baseToken?.address || pairAddress),
+    symbol: String(baseToken.symbol).toUpperCase(),
+    name: String(baseToken.name),
+    address: String(baseToken?.address || pairAddress),
+    price: toNumber(pair?.priceUsd),
+    change24h: toNumber(pair?.priceChange?.h24),
+    color: colorFromSymbol(String(baseToken.symbol).toUpperCase()),
+    image: pair?.info?.imageUrl,
+    marketCap: toNumber(pair?.marketCap),
+    volume: toNumber(pair?.volume?.h24),
+    rank: undefined,
+    links: {
+      homepage: pair?.url,
+      twitter: pair?.info?.socials?.find((s: any) => s?.type === 'twitter')?.url,
+      website: pair?.info?.websites?.[0]?.url,
+    },
+    sentiment: {
+      upvotes: 0,
+      downvotes: 0,
+    },
+  };
+};
+
+const fetchDexscreenerTokens = async (query = 'trending', limit = 30): Promise<Token[]> => {
+  try {
+    const url = `${DEXSCREENER_SEARCH_URL}?q=${encodeURIComponent(query)}`;
+    const data = await safeFetchJson<{ pairs?: any[] }>(url);
+    const pairs = Array.isArray(data?.pairs) ? data.pairs : [];
+    const mapped = pairs
+      .map(mapDexPairToToken)
+      .filter((token): token is Token => Boolean(token))
+      .sort((a, b) => (b.volume || 0) - (a.volume || 0))
+      .slice(0, limit);
+    return mapped;
+  } catch (error) {
+    console.error('Dexscreener fallback fetch failed:', error);
+    return [];
+  }
+};
+
 // --- Components ---
 
 const Card = ({ children, className, ...props }: { children: React.ReactNode; className?: string; [key: string]: any }) => (
@@ -263,36 +370,61 @@ export default function App() {
   const contentY = useTransform(springPullDistance, [0, pullThreshold], [0, 20]);
 
   const fetchData = async () => {
-    try {
-      const fetchJson = async (url: string) => {
-        const res = await fetch(url);
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(`HTTP ${res.status} on ${url}: ${text.slice(0, 100)}`);
-        }
-        return res.json();
-      };
+    const [tokensResult, alertsResult, listingsResult, rewardsResult] = await Promise.allSettled([
+      safeFetchJson<Token[]>('/api/tokens'),
+      safeFetchJson<string[]>('/api/alerts'),
+      safeFetchJson<ListingsData>('/api/listings'),
+      safeFetchJson<RewardsData>('/api/rewards')
+    ]);
 
-      const [tokensData, alertsData, listingsData, rewardsData] = await Promise.all([
-        fetchJson('/api/tokens'),
-        fetchJson('/api/alerts'),
-        fetchJson('/api/listings'),
-        fetchJson('/api/rewards')
-      ]);
-      setTokens(tokensData);
-      setAlerts(alertsData);
-      setListings(listingsData);
-      setRewards(rewardsData);
+    if (tokensResult.status === 'fulfilled' && Array.isArray(tokensResult.value)) {
+      setTokens(tokensResult.value);
+    } else {
+      console.error('Primary token API failed; falling back to Dexscreener search.', tokensResult);
+      const dexTokens = await fetchDexscreenerTokens('trending');
+      setTokens(dexTokens);
+    }
 
-      if (user) {
-        const portfolioData = await fetchJson(`/api/portfolio/${user.id}`);
-        setPortfolio(portfolioData);
-        
-        const leaderboardData = await fetchJson('/api/leaderboard');
-        setLeaderboard(leaderboardData);
-      }
-    } catch (e) {
-      console.error("Fetch error:", e);
+    if (alertsResult.status === 'fulfilled' && Array.isArray(alertsResult.value)) {
+      setAlerts(alertsResult.value);
+    } else {
+      console.error('Alerts API failed:', alertsResult);
+      setAlerts([]);
+    }
+
+    if (listingsResult.status === 'fulfilled') {
+      setListings(listingsResult.value);
+    } else {
+      console.error('Listings API failed:', listingsResult);
+      setListings(fallbackListingsData);
+    }
+
+    if (rewardsResult.status === 'fulfilled') {
+      setRewards(rewardsResult.value);
+    } else {
+      console.error('Rewards API failed:', rewardsResult);
+      setRewards(fallbackRewardsData);
+    }
+
+    if (!user) return;
+
+    const [portfolioResult, leaderboardResult] = await Promise.allSettled([
+      safeFetchJson<PortfolioData>(`/api/portfolio/${user.id}`),
+      safeFetchJson<any[]>('/api/leaderboard'),
+    ]);
+
+    if (portfolioResult.status === 'fulfilled') {
+      setPortfolio(portfolioResult.value);
+    } else {
+      console.error('Portfolio API failed:', portfolioResult);
+      setPortfolio(buildFallbackPortfolio(user));
+    }
+
+    if (leaderboardResult.status === 'fulfilled' && Array.isArray(leaderboardResult.value)) {
+      setLeaderboard(leaderboardResult.value);
+    } else {
+      console.error('Leaderboard API failed:', leaderboardResult);
+      setLeaderboard([]);
     }
   };
 
@@ -325,7 +457,7 @@ export default function App() {
     setInteractionCount(prev => prev + 1);
     
     // Smart gating: prompt to join after 5 interactions
-    if (interactionCount === 5 && !user?.completedTasks.includes('join_tg')) {
+    if (interactionCount === 5 && !user?.completedTasks?.includes('join_tg')) {
       setShowJoinModal(true);
     }
   };
@@ -448,13 +580,12 @@ export default function App() {
   const completeOnboarding = async () => {
     if (!user) return;
     try {
-      const res = await fetch('/api/user/onboarded', {
+      const data = await safeFetchJson<User>('/api/user/onboarded', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: user.id })
       });
-      const data = await res.json();
-      setUser(data);
+      setUser(normalizeUser(data));
       setShowOnboarding(false);
     } catch (e) {
       console.error("Onboarding completion error:", e);
@@ -485,23 +616,16 @@ export default function App() {
       tg.ready();
       
       const tgUser = tg.initDataUnsafe.user;
-      fetch('/api/check-user', {
+      safeFetchJson<User>('/api/check-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: tgUser.id, username: tgUser.username })
       })
-      .then(async res => {
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(`HTTP ${res.status}: ${text.slice(0, 100)}`);
-        }
-        return res.json();
-      })
-      .then(data => setUser({ ...data, photoUrl: tgUser.photo_url }))
+      .then(data => setUser(normalizeUser({ ...data, photoUrl: tgUser.photo_url })))
       .catch(err => console.error("Check user error:", err));
     } else {
       // Mock user for local dev or when not in Telegram
-      setUser({ id: 123, username: 'DegenMaster', balance: 1000, portfolio: {} });
+      setUser(normalizeUser({ id: 123, username: 'DegenMaster', balance: 1000, portfolio: {} }));
     }
   }, []);
 
@@ -533,11 +657,12 @@ export default function App() {
   useEffect(() => {
     if (selectedToken) {
       setIsHistoryLoading(true);
-      fetch(`/api/tokens/${selectedToken.id}/history?days=${chartTimeframe}`)
-        .then(res => res.json())
+      safeFetchJson<{ data?: any[] } | any[]>(`/api/tokens/${selectedToken.id}/history?days=${chartTimeframe}`)
         .then(resData => {
           // Handle new structure { data, isMock, isStale }
-          const historyData = resData.data || (Array.isArray(resData) ? resData : []);
+          const historyData = Array.isArray(resData)
+            ? resData
+            : (resData?.data || []);
           setTokenHistory(historyData);
           setIsHistoryLoading(false);
         })
@@ -548,8 +673,7 @@ export default function App() {
         });
 
       if (isDetailOpen) {
-        fetch(`/api/tokens/${selectedToken.id}/details`)
-          .then(res => res.json())
+        safeFetchJson<any>(`/api/tokens/${selectedToken.id}/details`)
           .then(data => setTokenDetails(data))
           .catch(err => console.error("Details fetch error:", err));
       }
@@ -563,7 +687,7 @@ export default function App() {
     if (!user || !selectedToken || !tradeAmount) return;
     setIsTrading(true);
     try {
-      const res = await fetch('/api/trade', {
+      const data = await safeFetchJson<any>('/api/trade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -572,18 +696,11 @@ export default function App() {
           amount: parseFloat(tradeAmount),
           type
         })
-      });
-      
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`HTTP ${res.status}: ${text.slice(0, 100)}`);
-      }
-      
-      const data = await res.json();
+      });      
       if (data.error) {
         alert(data.error);
       } else {
-        setUser(data);
+        setUser(normalizeUser(data));
         setTradeAmount('');
         setSelectedToken(null);
       }
@@ -1041,13 +1158,12 @@ export default function App() {
                         <button 
                           onClick={async () => {
                             if (task.link) window.open(task.link, '_blank');
-                            const res = await fetch('/api/rewards/complete', {
+                            const data = await safeFetchJson<any>('/api/rewards/complete', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ userId: user?.id, taskId: task.id })
                             });
-                            const data = await res.json();
-                            if (!data.error) setUser(data);
+                            if (!data.error) setUser(normalizeUser(data));
                           }}
                           className="px-6 py-2 bg-[#7C3AED] hover:bg-[#8B5CF6] rounded-xl text-[10px] font-black text-white uppercase tracking-widest transition-all"
                         >
@@ -1760,14 +1876,13 @@ export default function App() {
 
               <button 
                 onClick={async () => {
-                  const res = await fetch('/api/upgrade-pro', {
+                  const data = await safeFetchJson<any>('/api/upgrade-pro', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ userId: user?.id })
                   });
-                  const data = await res.json();
                   if (!data.error) {
-                    setUser(data);
+                    setUser(normalizeUser(data));
                     setShowProModal(false);
                     alert('Welcome to Pro! Your balance has been upgraded to $100,000.');
                   }
@@ -1810,7 +1925,7 @@ export default function App() {
 
               <div className="space-y-3">
                 <button 
-                  onClick={() => window.open('https://t.me/degenex_channel', '_blank')}
+                  onClick={() => window.open(TELEGRAM_CHANNEL_URL, '_blank')}
                   className="w-full py-5 bg-[#7C3AED] hover:bg-[#8B5CF6] text-white rounded-[20px] font-black uppercase tracking-widest text-sm transition-all active:scale-95"
                 >
                   Join Channel
