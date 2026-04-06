@@ -22,5 +22,5 @@ If GitHub shows conflict markers in:
 
 - `README.md` around the operations link, keep:
   - `For deployment and merge workflow notes, see [OPERATIONS.md](./OPERATIONS.md).`
-- `src/App.tsx` around API constants, keep:
-  - `const TELEGRAM_CHANNEL_URL = 'https://t.me/degenpapertrading';`
+- `src/App.tsx` around API constants, keep the block **without** an extra Telegram constant and keep the channel URL directly in the Join button handler:
+  - `window.open('https://t.me/degenpapertrading', '_blank')`

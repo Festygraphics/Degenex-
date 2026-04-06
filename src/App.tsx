@@ -138,8 +138,6 @@ interface PortfolioData {
 
 const API_BASE_URL = (((import.meta as any).env?.VITE_API_BASE_URL as string) || '').replace(/\/$/, '');
 const DEXSCREENER_SEARCH_URL = 'https://api.dexscreener.com/latest/dex/search';
-// Merge resolution: keep the custom Telegram community URL used by the join modal CTA.
-const TELEGRAM_CHANNEL_URL = 'https://t.me/degenpapertrading';
 
 const apiUrl = (path: string) => {
   if (path.startsWith('http')) return path;
@@ -1926,7 +1924,7 @@ export default function App() {
 
               <div className="space-y-3">
                 <button 
-                  onClick={() => window.open(TELEGRAM_CHANNEL_URL, '_blank')}
+                  onClick={() => window.open('https://t.me/degenpapertrading', '_blank')}
                   className="w-full py-5 bg-[#7C3AED] hover:bg-[#8B5CF6] text-white rounded-[20px] font-black uppercase tracking-widest text-sm transition-all active:scale-95"
                 >
                   Join Channel
