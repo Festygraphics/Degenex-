@@ -138,6 +138,7 @@ interface PortfolioData {
 
 const API_BASE_URL = (((import.meta as any).env?.VITE_API_BASE_URL as string) || '').replace(/\/$/, '');
 const DEXSCREENER_SEARCH_URL = 'https://api.dexscreener.com/latest/dex/search';
+// Merge resolution: keep the custom Telegram community URL used by the join modal CTA.
 const TELEGRAM_CHANNEL_URL = 'https://t.me/degenpapertrading';
 
 const apiUrl = (path: string) => {
