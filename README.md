@@ -41,7 +41,9 @@ The Telegram bot is organized as:
 
 `python bot.py` also works as a backward-compatible entrypoint.
 
-## Frontend production API configuration (Vercel)
+## Deployment and merge operations
+
+### Frontend production API configuration (Vercel)
 
 If your frontend is deployed separately from the Node/Express API, set:
 
@@ -49,7 +51,7 @@ If your frontend is deployed separately from the Node/Express API, set:
 
 This makes frontend requests use that backend instead of same-origin `/api/*`.
 
-## Conflict resolution helper
+### Conflict resolution helper
 
 If your branch reports merge conflicts, run:
 
