@@ -15,3 +15,4 @@ If your branch reports merge conflicts, run:
 `npm run check:conflicts`
 
 This scans for unresolved merge markers (`<<<<<<<`, `=======`, `>>>>>>>`) across the repository.
+<<

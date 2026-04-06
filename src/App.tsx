@@ -1924,7 +1924,7 @@ export default function App() {
 
               <div className="space-y-3">
                 <button 
-                  onClick={() => window.open('https://t.me/degenex_channel', '_blank')}
+                  onClick={() => window.open('https://t.me/degenpapertrading', '_blank')}
                   className="w-full py-5 bg-[#7C3AED] hover:bg-[#8B5CF6] text-white rounded-[20px] font-black uppercase tracking-widest text-sm transition-all active:scale-95"
                 >
                   Join Channel
