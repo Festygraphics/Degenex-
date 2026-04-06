@@ -41,4 +41,3 @@ The Telegram bot is organized as:
 
 `python bot.py` also works as a backward-compatible entrypoint.
 
-For deployment and merge workflow notes, see [`OPERATIONS.md`](./OPERATIONS.md).
