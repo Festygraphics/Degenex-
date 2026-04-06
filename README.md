@@ -40,3 +40,4 @@ The Telegram bot is organized as:
    `python main.py`
 
 `python bot.py` also works as a backward-compatible entrypoint.
+
