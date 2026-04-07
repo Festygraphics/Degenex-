@@ -763,29 +763,10 @@ export default function App() {
     }
   }, []);
 
-  // Polling for data
+  // Initial load (manual refresh only after this)
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, [user]);
-
-  // Refresh on focus/visibility change
-  useEffect(() => {
-    const handleFocus = () => {
-      if (document.visibilityState === 'visible') {
-        fetchData();
-      }
-    };
-
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleFocus);
-
-    return () => {
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleFocus);
-    };
-  }, [user]);
+  }, [user?.id]);
 
   // Fetch token history when selectedToken or timeframe changes
   useEffect(() => {
