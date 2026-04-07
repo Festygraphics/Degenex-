@@ -141,7 +141,7 @@ interface PortfolioData {
 const API_BASE_URL = (((import.meta as any).env?.VITE_API_BASE_URL as string) || '').replace(/\/$/, '');
 const DEXSCREENER_SEARCH_URL = 'https://api.dexscreener.com/latest/dex/search';
 const DEXSCREENER_TOKEN_URL = 'https://api.dexscreener.com/latest/dex/tokens';
-const DEXSCREENER_DEFAULT_QUERY = (((import.meta as any).env?.VITE_DEX_QUERY as string) || 'ETH');
+const TRENDING_SEARCH_TERMS = ['btc', 'sol', 'pepe', 'doge'];
 
 const apiUrl = (path: string) => {
   if (path.startsWith('http')) return path;
@@ -293,6 +293,24 @@ const fetchDexscreenerTokens = async (query = 'trending', limit = 30): Promise<T
   }
 };
 
+const fetchTrendingDexTokens = async (): Promise<Token[]> => {
+  const batches = await Promise.all(TRENDING_SEARCH_TERMS.map(term => fetchDexscreenerTokens(term, 25)));
+  const merged = batches.flat();
+  const unique = new Map<string, Token>();
+
+  for (const token of merged) {
+    const key = token.pairAddress || token.address || token.id;
+    const existing = unique.get(key);
+    if (!existing || (token.volume || 0) > (existing.volume || 0)) {
+      unique.set(key, token);
+    }
+  }
+
+  return Array.from(unique.values())
+    .sort((a, b) => (b.volume || 0) - (a.volume || 0))
+    .slice(0, 60);
+};
+
 // --- Components ---
 
 const Card = ({ children, className, ...props }: { children: React.ReactNode; className?: string; [key: string]: any }) => (
@@ -425,7 +443,7 @@ export default function App() {
     setTokensLoading(true);
     setTokensError(null);
     const [tokensResult, alertsResult, listingsResult, rewardsResult] = await Promise.allSettled([
-      safeFetchJson<Token[]>('/api/tokens'),
+      fetchTrendingDexTokens(),
       safeFetchJson<string[]>('/api/alerts'),
       safeFetchJson<ListingsData>('/api/listings'),
       safeFetchJson<RewardsData>('/api/rewards')
@@ -434,11 +452,14 @@ export default function App() {
     if (tokensResult.status === 'fulfilled' && Array.isArray(tokensResult.value)) {
       setTokens(tokensResult.value);
     } else {
-      console.error('Primary token API failed; falling back to Dexscreener search.', tokensResult);
-      const dexTokens = await fetchDexscreenerTokens(DEXSCREENER_DEFAULT_QUERY);
-      setTokens(dexTokens);
-      if (!dexTokens.length) {
-        setTokensError('No token data returned from Dexscreener.');
+      console.error('Dexscreener trending fetch failed, falling back to backend /api/tokens.', tokensResult);
+      try {
+        const fallbackTokens = await safeFetchJson<Token[]>('/api/tokens');
+        setTokens(fallbackTokens);
+      } catch (fallbackError) {
+        console.error('Fallback /api/tokens fetch failed:', fallbackError);
+        setTokens([]);
+        setTokensError('No token data available from Dexscreener or backend.');
       }
     }
     setTokensLoading(false);
@@ -565,6 +586,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [sortBy, setSortBy] = useState<'marketCap' | 'volume' | 'change24h' | 'price'>('marketCap');
+  const [isSearchLoading, setIsSearchLoading] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingStep, setOnboardingStep] = useState(0);
   const [seenTooltips, setSeenTooltips] = useState<string[]>(() => {
@@ -665,6 +687,31 @@ export default function App() {
         return valB - valA;
       });
   }, [tokens, searchQuery, sortBy]);
+
+  const handleSearchSubmit = async () => {
+    const query = searchQuery.trim();
+    setIsSearchLoading(true);
+    setTokensError(null);
+    try {
+      const discovered = query
+        ? await fetchDexscreenerTokens(query, 60)
+        : await fetchTrendingDexTokens();
+
+      setTokens(discovered);
+      if (!discovered.length) {
+        setTokensError(query ? `No tokens found for "${query}".` : 'No trending tokens found right now.');
+      }
+    } catch (error) {
+      console.error('Token search failed:', error);
+      setTokensError('Token search failed. Please try again.');
+    } finally {
+      setIsSearchLoading(false);
+    }
+  };
+
+  const handleShowTopGainers = () => {
+    setSortBy('change24h');
+  };
 
   // Telegram WebApp Integration
   useEffect(() => {
@@ -806,8 +853,11 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-4">
-          <button className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-white/40 hover:text-white transition-colors border border-white/5">
-            <Bell size={20} />
+          <button
+            onClick={fetchData}
+            className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-white/40 hover:text-white transition-colors border border-white/5"
+          >
+            <RefreshCw size={18} className={cn(tokensLoading && "animate-spin")} />
           </button>
           <div className="w-10 h-10 rounded-xl border border-[#7C3AED]/30 p-0.5 overflow-hidden bg-[#121821] flex items-center justify-center shadow-lg shadow-[#7C3AED]/10">
             {user?.photoUrl ? (
@@ -1314,18 +1364,31 @@ export default function App() {
                     placeholder="Search name, symbol or address..." 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleSearchSubmit();
+                      }
+                    }}
                     onFocus={() => setIsSearchFocused(true)}
                     onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
                     className="w-full bg-[#111114] border border-white/[0.05] rounded-[24px] py-5 pl-14 pr-14 text-sm font-medium focus:outline-none focus:border-[#7C3AED]/50 focus:bg-[#111114] transition-all placeholder:text-white/20 shadow-lg shadow-black/20"
                   />
-                  {searchQuery && (
-                    <button 
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/20 hover:text-white hover:bg-white/10 transition-all"
+                  <div className="absolute right-5 top-1/2 -translate-y-1/2 flex items-center gap-2">
+                    {searchQuery && (
+                      <button 
+                        onClick={() => setSearchQuery('')}
+                        className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/20 hover:text-white hover:bg-white/10 transition-all"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                    <button
+                      onClick={handleSearchSubmit}
+                      className="w-8 h-8 rounded-full bg-[#7C3AED]/20 flex items-center justify-center text-[#C4B5FD] hover:bg-[#7C3AED]/30 transition-all"
                     >
-                      <X size={16} />
+                      {isSearchLoading ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
                     </button>
-                  )}
+                  </div>
 
                   {/* Auto-suggestions */}
                   <AnimatePresence>
@@ -1393,6 +1456,18 @@ export default function App() {
 
                 {/* Filter Controls */}
                 <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
+                  <button
+                    onClick={fetchData}
+                    className="whitespace-nowrap px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all border bg-[#111114] border-white/[0.05] text-[#9CA3AF] hover:text-white hover:border-white/10"
+                  >
+                    Refresh
+                  </button>
+                  <button
+                    onClick={handleShowTopGainers}
+                    className="whitespace-nowrap px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all border bg-[#111114] border-white/[0.05] text-[#9CA3AF] hover:text-white hover:border-white/10"
+                  >
+                    Top Gainers
+                  </button>
                   {[
                     { id: 'marketCap', label: 'Market Cap' },
                     { id: 'volume', label: '24h Volume' },
