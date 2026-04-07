@@ -306,9 +306,32 @@ const fetchTrendingDexTokens = async (): Promise<Token[]> => {
     }
   }
 
-  return Array.from(unique.values())
-    .sort((a, b) => (b.volume || 0) - (a.volume || 0))
-    .slice(0, 60);
+  const sorted = Array.from(unique.values()).sort((a, b) => (b.volume || 0) - (a.volume || 0));
+  const perChain: Record<string, Token[]> = {};
+  for (const token of sorted) {
+    const chain = token.chainId || 'unknown';
+    if (!perChain[chain]) perChain[chain] = [];
+    perChain[chain].push(token);
+  }
+
+  const chainKeys = Object.keys(perChain).sort((a, b) => (perChain[b].length - perChain[a].length));
+  const diversified: Token[] = [];
+  let added = true;
+  let idx = 0;
+  while (added && diversified.length < 60) {
+    added = false;
+    for (const chain of chainKeys) {
+      const item = perChain[chain][idx];
+      if (item) {
+        diversified.push(item);
+        added = true;
+      }
+      if (diversified.length >= 60) break;
+    }
+    idx += 1;
+  }
+
+  return diversified;
 };
 
 // --- Components ---
@@ -711,6 +734,12 @@ export default function App() {
 
   const handleShowTopGainers = () => {
     setSortBy('change24h');
+    setTokens(prev => [...prev].sort((a, b) => b.change24h - a.change24h));
+  };
+
+  const handleShowTopLosers = () => {
+    setSortBy('change24h');
+    setTokens(prev => [...prev].sort((a, b) => a.change24h - b.change24h));
   };
 
   // Telegram WebApp Integration
@@ -1332,14 +1361,23 @@ export default function App() {
 
               {/* Social Links */}
               <div className="flex justify-center gap-6 pt-4 pb-8">
-                <button className="w-12 h-12 rounded-2xl bg-[#111114] border border-white/5 flex items-center justify-center text-[#9CA3AF] hover:text-white transition-all">
+                <button
+                  onClick={() => window.open('https://x.com/dexscreener', '_blank')}
+                  className="w-12 h-12 rounded-2xl bg-[#111114] border border-white/5 flex items-center justify-center text-[#9CA3AF] hover:text-white transition-all"
+                >
                   <Twitter size={20} />
                 </button>
-                <button className="w-12 h-12 rounded-2xl bg-[#111114] border border-white/5 flex items-center justify-center text-[#9CA3AF] hover:text-white transition-all">
+                <button
+                  onClick={() => window.open('https://dexscreener.com', '_blank')}
+                  className="w-12 h-12 rounded-2xl bg-[#111114] border border-white/5 flex items-center justify-center text-[#9CA3AF] hover:text-white transition-all"
+                >
                   <Globe size={20} />
                 </button>
-                <button className="w-12 h-12 rounded-2xl bg-[#111114] border border-white/5 flex items-center justify-center text-[#9CA3AF] hover:text-white transition-all">
-                  <Bell size={20} />
+                <button
+                  onClick={fetchData}
+                  className="w-12 h-12 rounded-2xl bg-[#111114] border border-white/5 flex items-center justify-center text-[#9CA3AF] hover:text-white transition-all"
+                >
+                  <RefreshCw size={20} className={cn(tokensLoading && "animate-spin")} />
                 </button>
               </div>
             </motion.div>
@@ -1467,6 +1505,12 @@ export default function App() {
                     className="whitespace-nowrap px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all border bg-[#111114] border-white/[0.05] text-[#9CA3AF] hover:text-white hover:border-white/10"
                   >
                     Top Gainers
+                  </button>
+                  <button
+                    onClick={handleShowTopLosers}
+                    className="whitespace-nowrap px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-[0.15em] transition-all border bg-[#111114] border-white/[0.05] text-[#9CA3AF] hover:text-white hover:border-white/10"
+                  >
+                    Top Losers
                   </button>
                   {[
                     { id: 'marketCap', label: 'Market Cap' },
